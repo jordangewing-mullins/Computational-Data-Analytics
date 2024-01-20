@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Board Game Popularity by Country</title>
+    <script src="https://d3js.org/d3.v5.min.js"></script>
+    <script src="https://unpkg.com/d3-geo-projection@2.6.0/dist/d3-geo-projection.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/d3-tip/0.9.1/d3-tip.min.js"></script>
+    <style>
+        /* Add your CSS styles here */
+        /* You can style the tooltip and legend here */
+        .d3-tip {
+            display: none; /* Hide the original d3-tip */
+        }
+
+        /* Define colors for the quantile scale */
+        .color-1 { fill: #eff3ff; }
+        .color-2 { fill: #bdd7e7; }
+        .color-3 { fill: #6baed6; }
+        .color-4 { fill: #3182bd; }
+        .color-gray { fill: gray; }
+
+        /* Style for legend boxes */
+        .legend-box {
+            width: 20px;
+            height: 20px;
+            margin-right: 5px;
+            vertical-align: middle;
+            display: inline-block; /* Ensures the legend boxes are displayed horizontally */
+        }
+
+        /* CSS style for the background color of legend boxes */
+        .legend-box.color-1 { background-color: #eff3ff; }
+        .legend-box.color-2 { background-color: #bdd7e7; }
+        .legend-box.color-3 { background-color: #6baed6; }
+        .legend-box.color-4 { background-color: #3182bd; }
+    </style>
+</head>
+<body>
+    <h1>Board Game Popularity by Country</h1>
+
+    <!-- Dropdown for game selection -->
+    <select id="gameDropdown"></select>
+
+    <!-- SVG container for choropleth map -->
+    <svg id="choropleth" width="800" height="500">
+        <g id="countries"></g> <!-- Paths for countries will be appended here -->
+        <g id="legend" transform="translate(650, 20)">
+            <!-- Create legend items as SVG elements -->
+            <rect class="legend-box color-1" x="0" y="0" width="20" height="20"></rect>
+            <text x="30" y="14" class="legend-label">5.67 to 7.00</text>
+            <rect class="legend-box color-2" x="0" y="30" width="20" height="20"></rect>
+            <text x="30" y="44" class="legend-label">7.00 to 7.29</text>
+            <rect class="legend-box color-3" x="0" y="60" width="20" height="20"></rect>
+            <text x="30" y="74" class="legend-label">7.29 to 7.58</text>
+            <rect class="legend-box color-4" x="0" y="90" width="20" height="20"></rect>
+            <text x="30" y="104" class="legend-label">7.58 to 10.00</text>
+        </g>
+    </svg>
+
+    <!-- Tooltip -->
+    <div id="tooltip" style="display: none;"></div>
+
+    <script>
+        // Define the countryRatings variable in a higher scope
+        var countryRatings;
+        var selectedGame;
+        var quantileScale;
+        var legend;
+        var path;
+
+        // Define SVG dimensions
+        var width = 800;
+        var height = 500;
+
+        // Create SVG container
+        var svg = d3.select("#choropleth")
+            .attr("width", width)
+            .attr("height", height);
+
+        // Function to update the legend
+        function updateLegend(quantiles) {
+            legend.html(""); // Clear the legend
+
+            // Define quartile ranges based on quantiles
+            var quartileRanges = [];
+            for (var i = 0; i < quantiles.length - 1; i++) {
+                var range = `${quantiles[i].toFixed(2)} to ${quantiles[i + 1].toFixed(2)}`;
+                quartileRanges.push(range);
+            }
+
+            // Create legend color blocks and labels
+            for (var i = 0; i < quartileRanges.length; i++) {
+                var colorClass = `legend-box color-${i + 1}`; // Use new legend color classes
+                var legendBox = legend.append("rect")
+                    .attr("class", colorClass + " legend-box")
+                    .attr("x", 0)
+                    .attr("y", i * 30)
+                    .attr("width", 20)
+                    .attr("height", 20);
+                var legendLabel = legend.append("text")
+                    .attr("x", 30)
+                    .attr("y", i * 30 + 14)
+                    .attr("class", "legend-label")
+                    .text(quartileRanges[i]);
+            }
+        }
+
+        // Load game data and populate the dropdown
+        d3.csv("ratings-by-country.csv").then(function(data) {
+            // Define an object to store country ratings
+            countryRatings = {};
+
+            // Populate the countryRatings object with ratings data from the CSV
+            data.forEach(function(d) {
+                var country = d.Country;
+                var game = d.Game;
+                var rating = parseFloat(d["Average Rating"]); // Assuming the rating is a numeric field in your CSV
+                var numUsers = parseInt(d["Number of Users"]); // Assuming the number of users is a numeric field in your CSV
+
+                // Check if the country exists in the object, and add the rating and number of users for the game
+                if (!countryRatings[country]) {
+                    countryRatings[country] = {};
+                }
+                countryRatings[country][game] = {
+                    rating: rating,
+                    numUsers: numUsers
+                };
+            });
+
+            // Extract unique game names
+            var gamesSet = new Set(data.map(function(d) { return d.Game; }));
+            var games = Array.from(gamesSet); // Convert the Set back to an array
+
+            // Sort the game names case-sensitively
+            games.sort();
+
+            // Populate the dropdown with game options
+            var dropdown = d3.select("#gameDropdown");
+            dropdown.selectAll("option")
+                .data(games)
+                .enter().append("option")
+                .attr("value", function(d) { return d; })
+                .text(function(d) { return d; });
+
+            // Set a default game to display initially
+            selectedGame = games[0];
+
+            // Load world map data from world_countries.json
+            d3.json("world_countries.json").then(function(world) {
+                // Create a projection with "Natural Earth" projection
+                var projection = d3.geoNaturalEarth1()
+                    .scale(100)
+                    .translate([width / 2, height / 2]);
+                var path = d3.geoPath().projection(projection);
+
+                // Create a <g> element for countries
+                var countriesGroup = svg.select("#countries");
+                if (countriesGroup.empty()) {
+                    countriesGroup = svg.append("g").attr("id", "countries");
+                }
+
+                // Function to update the choropleth map based on selected game
+                function updateChoropleth() {
+                    countriesGroup.selectAll("path")
+                        .attr("class", function(d) {
+                            var countryName = d.properties.name;
+
+                            // Check if the countryName exists in the countryRatings object
+                            if (countryRatings[countryName]) {
+                                // Check if the selectedGame exists for this country
+                                if (countryRatings[countryName][selectedGame]) {
+                                    var gameRating = parseFloat(countryRatings[countryName][selectedGame].rating);
+                                    return quantileScale(gameRating); // Assign color based on quantile scale
+                                }
+                            }
+                            return "color-gray"; // Default color for countries with no data
+                        });
+                }
+
+                // Event listener for the dropdown to update the map
+                dropdown.on("change", function() {
+                    selectedGame = this.value;
+
+                    // Update the quantiles based on the selected game
+                    var allRatings = Object.values(countryRatings)
+                        .map(function(country) { return country[selectedGame] ? country[selectedGame].rating : undefined; })
+                        .filter(function(rating) { return rating !== undefined; });
+                    var quantiles = d3.range(0, 1.25, 0.25).map(function(q) {
+                        return d3.quantile(allRatings.sort(d3.ascending), q);
+                    });
+
+                    // Update the quantile scale
+                    quantileScale = d3.scaleQuantile()
+                        .domain(quantiles)
+                        .range(["color-1", "color-2", "color-3", "color-4"]);
+
+                    // Update the legend
+                    updateLegend(quantiles);
+
+                    // Update the choropleth map
+                    updateChoropleth();
+                });
+
+                // Calculate the initial quantiles and update the legend
+                var allRatings = Object.values(countryRatings)
+                    .map(function(country) { return country[selectedGame] ? country[selectedGame].rating : undefined; })
+                    .filter(function(rating) { return rating !== undefined; });
+                var quantiles = d3.range(0, 1.25, 0.25).map(function(q) {
+                    return d3.quantile(allRatings.sort(d3.ascending), q);
+                });
+
+                // Create the initial quantile color scale
+                quantileScale = d3.scaleQuantile()
+                    .domain(quantiles)
+                    .range(["color-1", "color-2", "color-3", "color-4"]);
+
+                // Create the initial legend
+                legend = svg.select("#legend")
+                    .style("font-size", "14px");
+
+                // Update the legend
+                updateLegend(quantiles);
+
+                countriesGroup.selectAll("path")
+                    .data(world.features)
+                    .enter().append("path")
+                    .attr("d", path)
+                    .attr("class", function(d) {
+                        var countryName = d.properties.name;
+
+                        // Check if the countryName exists in the countryRatings object
+                        if (countryRatings[countryName]) {
+                            // Check if the selectedGame exists for this country
+                            if (countryRatings[countryName][selectedGame]) {
+                                var gameRating = parseFloat(countryRatings[countryName][selectedGame].rating);
+                                return quantileScale(gameRating); // Assign color based on quantile scale
+                            }
+                        }
+                        return "color-gray"; // Default color for countries with no data
+                    })
+                    .on("mouseover", function(d) {
+                        var countryName = d.properties.name;
+                        var gameRating = "N/A"; // Default value for game rating
+                        var numUsers = "N/A"; // Default value for number of users
+
+                        // Check if the countryName exists in the countryRatings object
+                        if (countryRatings[countryName]) {
+                            // Check if the selectedGame exists for this country
+                            if (countryRatings[countryName][selectedGame]) {
+                                gameRating = countryRatings[countryName][selectedGame].rating;
+                                numUsers = countryRatings[countryName][selectedGame].numUsers;
+                            }
+                        }
+
+                        // Format the tooltip content with line breaks
+                        var tooltipContent = `<strong>Country:</strong> ${countryName}<br>`;
+                        tooltipContent += `<strong>Game:</strong> ${selectedGame}<br>`;
+                        tooltipContent += `<strong>Avg Rating:</strong> ${gameRating}<br>`;
+                        tooltipContent += `<strong>Number of Users:</strong> ${numUsers}<br>`;
+
+                        // Set the tooltip content and display it
+                        d3.select("#tooltip")
+                            .style("display", "block")
+                            .html(tooltipContent);
+                    })
+                    .on("mouseout", function() {
+                        // Hide the tooltip on mouseout
+                        d3.select("#tooltip").style("display", "none");
+                    });
+
+            }).catch(function(error) {
+                console.log("Error loading world map data:", error);
+            });
+
+        }).catch(function(error) {
+            console.log("Error loading ratings data:", error);
+        });
+    </script>
+</body>
+</html>
+
+

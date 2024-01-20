@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<head>
+<style>
+/* Define styles for the edges */
+path.link-similar {
+  fill: none;
+  stroke: #888; /* Gray color for similar edges */
+  stroke-width: 3px; /* Thick edge for similar edges */
+  stroke-dasharray: none; /* Solid line for similar edges */
+}
+
+path.link-not-similar {
+  fill: none;
+  stroke: green; /* Green color for not similar edges */
+  stroke-width: 1px; /* Thin edge for not similar edges */
+  stroke-dasharray: 5, 5; /* Dashed line for not similar edges */
+}
+
+circle {
+  stroke: #fff;
+  stroke-width: 1.5px;
+}
+
+text {
+  fill: #000;
+  font: 10px sans-serif;
+  pointer-events: none;
+  text-anchor: start;
+  dominant-baseline: hanging;
+  font-weight: bold;
+}
+
+.node-pinned {
+  fill: blue; /* Color for pinned nodes */
+}
+
+.node-dragged {
+  fill: red; /* Color for dragged nodes */
+}
+
+</style>
+<meta charset="utf-8">
+<title>Force-Directed Graph with Styled Edges</title>
+</head>
+
+<body>
+<!-- Add jag31 label -->
+<text id="credit" x="1100" y="20" font-size="12" font-weight="bold">jag31</text>
+<script type="text/javascript" src="../lib/d3.v5.min.js"></script>
+<script>
+
+// Load data from the CSV file
+d3.dsv(",", "board_games.csv", function(d) {
+  return {
+    source: d.source,
+    target: d.target,
+    value: +d.value
+  }
+}).then(function(data) {
+
+  var links = data;
+  var nodes = {};
+
+  // Compute the distinct nodes from the links.
+  links.forEach(function(link) {
+    link.source = nodes[link.source] || (nodes[link.source] = { name: link.source, degree: 0 });
+    link.target = nodes[link.target] || (nodes[link.target] = { name: link.target, degree: 0 });
+    link.source.degree++;
+    link.target.degree++;
+  });
+
+  // Calculate the min and max degrees
+  var degrees = Object.values(nodes).map(function(node) { return node.degree; });
+  var minDegree = d3.min(degrees);
+  var maxDegree = d3.max(degrees);
+
+  // Define a color scale based on degrees
+  var colorScale = d3.scaleLinear()
+    .domain([minDegree, maxDegree])
+    .range(["lightblue", "blue"]); // Adjust the colors as needed
+
+  var width = 1200,
+      height = 700;
+
+  var force = d3.forceSimulation()
+      .nodes(d3.values(nodes))
+      .force("link", d3.forceLink(links).distance(100))
+      .force('center', d3.forceCenter(width / 2, height / 2))
+      .force("x", d3.forceX())
+      .force("y", d3.forceY())
+      .force("charge", d3.forceManyBody().strength(-250))
+      .alphaTarget(1)
+      .on("tick", tick);
+
+  var svg = d3.select("body").append("svg")
+      .attr("id", "svg-container")
+      .attr("width", width)
+      .attr("height", height);
+
+  // Add the links with different styles based on "value"
+  var path = svg.append("g")
+      .selectAll("path")
+      .data(links)
+      .enter()
+      .append("path")
+      .attr("class", function(d) {
+        // Determine the class based on "value"
+        return d.value === 0 ? "link-similar" : "link-not-similar";
+      });
+
+  // Define the nodes
+  var node = svg.selectAll(".node")
+    .data(force.nodes())
+    .enter().append("g")
+    .attr("class", "node")
+    .call(d3.drag()
+        .on("start", dragstarted)
+        .on("drag", dragged)
+        .on("end", dragended))
+    .on("dblclick", dblclicked); // Handle double-click event
+
+    // Add the nodes as circles
+  node.append("circle")
+      .attr("id", function(d){
+        return (d.name.replace(/\s+/g,'').toLowerCase());
+      })
+      .attr("r", function(d) {
+        // Calculate the node radius based on its degree
+        var minRadius = 10; // Minimum radius
+        var maxRadius = 30; // Maximum radius (adjust as needed)
+        var scale = d3.scaleLinear()
+            .domain([minDegree, maxDegree]) // Use the calculated minDegree and maxDegree
+            .range([minRadius, maxRadius]);
+        return scale(d.degree);
+      })
+      .style("fill", function(d) { return colorScale(d.degree); })
+      .classed("node-pinned", function(d) { return d.fixed; }); // Add the CSS class for pinned nodes based on the fixed property
+    
+  // Add labels to the nodes
+  var labels = node.append("text")
+      .attr("class", "label")
+      .attr("dx", 8)
+      .attr("dy", -8)
+      .text(function(d) { return d.name; });
+
+  // Tick function to update positions
+  function tick() {
+    path.attr("d", function(d) {
+      var dx = d.target.x - d.source.x,
+          dy = d.target.y - d.source.y,
+          dr = Math.sqrt(dx * dx + dy * dy);
+      return "M" +
+          d.source.x + "," +
+          d.source.y + "A" +
+          dr + "," + dr + " 0 0,1 " +
+          d.target.x + "," +
+          d.target.y;
+    });
+
+    node.attr("transform", function(d) {
+      return "translate(" + d.x + "," + d.y + ")";
+    });
+
+    labels.attr("x", function(d) { return d.x + 8; })
+          .attr("y", function(d) { return d.y - 8; });
+  }
+
+  // Drag functions
+  function dragstarted(d) {
+    if (!d3.event.active) force.alphaTarget(0.3).restart();
+    d.fx = d.x;
+    d.fy = d.y;
+    d3.select(this).classed("node-dragged", true); // Add a class for dragged nodes
+    d.fixed = true; 
+  }
+
+  function dragged(d) {
+    d.fx = d3.event.x;
+    d.fy = d3.event.y;
+  }
+
+  function dragended(d) {
+    if (!d3.event.active) force.alphaTarget(0);
+    if (d.fixed === true) {
+      // Node is pinned, change its color
+      d3.select(this).select("circle").style("fill", "red"); // Change the color for pinned nodes
+    } else {
+      // Node is not pinned, change its color back to the original color
+      d3.select(this).select("circle").style("fill", function(d) { return colorScale(d.degree); });
+      d.fx = null;
+      d.fy = null;
+      d3.select(this).select("circle").style("stroke", "grey"); // Change the stroke color to grey
+    }
+    d.fixed = d.fixed === true ? true : false; // Ensure 'fixed' property is a boolean
+  }
+
+  // Handle double-click event to toggle pinned/unpinned state
+  function dblclicked(d) {
+    if (!d3.event.active) force.alphaTarget(0.3).restart();
+
+    if (d.fixed === true) {
+      // Node is currently pinned, unpin it
+      d.fx = null;
+      d.fy = null;
+      d.fixed = false;
+      d3.select(this).select("circle").style("fill", function(d) {
+        return colorScale(d.degree); // Change the fill color back to the original color
+      });
+      d3.select(this).classed("node-pinned", false); // Remove the CSS class for pinned nodes
+    } else {
+      // Node is not pinned, pin it
+      d.fx = d.x;
+      d.fy = d.y;
+      d.fixed = true;
+      d3.select(this).select("circle").style("fill", "red"); // Change the color for pinned nodes
+      d3.select(this).classed("node-pinned", true); // Add a CSS class for pinned nodes
+    }
+  }
+}).catch(function(error) {
+  console.log(error);
+});
+
+</script>
+</body>
+</html>
