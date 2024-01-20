@@ -1,0 +1,12 @@
+---
+:id: 209598406
+:submitters:
+- :name: Jordan Alexis Gewing-Mullins
+  :email: jag31@gatech.edu
+:created_at: !ruby/object:ActiveSupport::TimeWithZone
+  utc: 2023-11-05 06:43:27.238442000 Z
+  zone: !ruby/object:ActiveSupport::TimeZone
+    name: America/Los_Angeles
+  time: 2023-11-04 23:43:27.238442000 Z
+:status: processed
+:score: 26.0
